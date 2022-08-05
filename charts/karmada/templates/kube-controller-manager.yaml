@@ -33,10 +33,7 @@ spec:
         {{- include "karmada.kube-cm.labels" . | nindent 8 }}
         {{- include "karmada.kube-cm.podLabels" . | nindent 8 }}
     spec:
-      {{- with .Values.kubeControllerManager.imagePullSecrets }}
-      imagePullSecrets:
-      {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "karmada.kubeControllerManager.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ $name }}-kube-controller-manager
       {{- with .Values.kubeControllerManager.nodeSelector }}
       nodeSelector:
@@ -66,7 +63,6 @@ spec:
             - --kubeconfig=/etc/kubeconfig
             - --leader-elect=true
             - --node-cidr-mask-size=24
-            - --port=0
             - --root-ca-file=/etc/karmada/pki/server-ca.crt
             - --service-account-private-key-file=/etc/karmada/pki/karmada.key
             - --service-cluster-ip-range=10.96.0.0/12

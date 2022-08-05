@@ -10,6 +10,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
@@ -33,7 +34,8 @@ func getAllDefaultAggregateStatusInterpreter() map[schema.GroupVersionKind]aggre
 }
 
 func aggregateDeploymentStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	deploy, err := helper.ConvertToDeployment(object)
+	deploy := &appsv1.Deployment{}
+	err := helper.ConvertToTypedObject(object, deploy)
 	if err != nil {
 		return nil, err
 	}
@@ -50,6 +52,12 @@ func aggregateDeploymentStatus(object *unstructured.Unstructured, aggregatedStat
 		}
 		klog.V(3).Infof("Grab deployment(%s/%s) status from cluster(%s), replicas: %d, ready: %d, updated: %d, available: %d, unavailable: %d",
 			deploy.Namespace, deploy.Name, item.ClusterName, temp.Replicas, temp.ReadyReplicas, temp.UpdatedReplicas, temp.AvailableReplicas, temp.UnavailableReplicas)
+
+		// always set 'observedGeneration' with current generation(.metadata.generation)
+		// which is the generation Karmada 'observed'.
+		// The 'observedGeneration' is mainly used by GitOps tools(like 'Argo CD') to assess the health status.
+		// For more details, please refer to https://argo-cd.readthedocs.io/en/stable/operator-manual/health/.
+		newStatus.ObservedGeneration = deploy.Generation
 		newStatus.Replicas += temp.Replicas
 		newStatus.ReadyReplicas += temp.ReadyReplicas
 		newStatus.UpdatedReplicas += temp.UpdatedReplicas
@@ -57,7 +65,8 @@ func aggregateDeploymentStatus(object *unstructured.Unstructured, aggregatedStat
 		newStatus.UnavailableReplicas += temp.UnavailableReplicas
 	}
 
-	if oldStatus.Replicas == newStatus.Replicas &&
+	if oldStatus.ObservedGeneration == newStatus.ObservedGeneration &&
+		oldStatus.Replicas == newStatus.Replicas &&
 		oldStatus.ReadyReplicas == newStatus.ReadyReplicas &&
 		oldStatus.UpdatedReplicas == newStatus.UpdatedReplicas &&
 		oldStatus.AvailableReplicas == newStatus.AvailableReplicas &&
@@ -66,6 +75,7 @@ func aggregateDeploymentStatus(object *unstructured.Unstructured, aggregatedStat
 		return object, nil
 	}
 
+	oldStatus.ObservedGeneration = newStatus.ObservedGeneration
 	oldStatus.Replicas = newStatus.Replicas
 	oldStatus.ReadyReplicas = newStatus.ReadyReplicas
 	oldStatus.UpdatedReplicas = newStatus.UpdatedReplicas
@@ -76,7 +86,8 @@ func aggregateDeploymentStatus(object *unstructured.Unstructured, aggregatedStat
 }
 
 func aggregateServiceStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	service, err := helper.ConvertToService(object)
+	service := &corev1.Service{}
+	err := helper.ConvertToTypedObject(object, service)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +130,8 @@ func aggregateServiceStatus(object *unstructured.Unstructured, aggregatedStatusI
 }
 
 func aggregateIngressStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	ingress, err := helper.ConvertToIngress(object)
+	ingress := &networkingv1.Ingress{}
+	err := helper.ConvertToTypedObject(object, ingress)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +169,8 @@ func aggregateIngressStatus(object *unstructured.Unstructured, aggregatedStatusI
 }
 
 func aggregateJobStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	job, err := helper.ConvertToJob(object)
+	job := &batchv1.Job{}
+	err := helper.ConvertToTypedObject(object, job)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +195,8 @@ func aggregateJobStatus(object *unstructured.Unstructured, aggregatedStatusItems
 }
 
 func aggregateDaemonSetStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	daemonSet, err := helper.ConvertToDaemonSet(object)
+	daemonSet := &appsv1.DaemonSet{}
+	err := helper.ConvertToTypedObject(object, daemonSet)
 	if err != nil {
 		return nil, err
 	}
@@ -199,6 +213,12 @@ func aggregateDaemonSetStatus(object *unstructured.Unstructured, aggregatedStatu
 		}
 		klog.V(3).Infof("Grab daemonSet(%s/%s) status from cluster(%s), currentNumberScheduled: %d, desiredNumberScheduled: %d, numberAvailable: %d, numberMisscheduled: %d, numberReady: %d, updatedNumberScheduled: %d, numberUnavailable: %d",
 			daemonSet.Namespace, daemonSet.Name, item.ClusterName, temp.CurrentNumberScheduled, temp.DesiredNumberScheduled, temp.NumberAvailable, temp.NumberMisscheduled, temp.NumberReady, temp.UpdatedNumberScheduled, temp.NumberUnavailable)
+
+		// always set 'observedGeneration' with current generation(.metadata.generation)
+		// which is the generation Karmada 'observed'.
+		// The 'observedGeneration' is mainly used by GitOps tools(like 'Argo CD') to assess the health status.
+		// For more details, please refer to https://argo-cd.readthedocs.io/en/stable/operator-manual/health/.
+		newStatus.ObservedGeneration = daemonSet.Generation
 		newStatus.CurrentNumberScheduled += temp.CurrentNumberScheduled
 		newStatus.DesiredNumberScheduled += temp.DesiredNumberScheduled
 		newStatus.NumberAvailable += temp.NumberAvailable
@@ -208,7 +228,8 @@ func aggregateDaemonSetStatus(object *unstructured.Unstructured, aggregatedStatu
 		newStatus.NumberUnavailable += temp.NumberUnavailable
 	}
 
-	if oldStatus.CurrentNumberScheduled == newStatus.CurrentNumberScheduled &&
+	if oldStatus.ObservedGeneration == newStatus.ObservedGeneration &&
+		oldStatus.CurrentNumberScheduled == newStatus.CurrentNumberScheduled &&
 		oldStatus.DesiredNumberScheduled == newStatus.DesiredNumberScheduled &&
 		oldStatus.NumberAvailable == newStatus.NumberAvailable &&
 		oldStatus.NumberMisscheduled == newStatus.NumberMisscheduled &&
@@ -219,6 +240,7 @@ func aggregateDaemonSetStatus(object *unstructured.Unstructured, aggregatedStatu
 		return object, nil
 	}
 
+	oldStatus.ObservedGeneration = newStatus.ObservedGeneration
 	oldStatus.CurrentNumberScheduled = newStatus.CurrentNumberScheduled
 	oldStatus.DesiredNumberScheduled = newStatus.DesiredNumberScheduled
 	oldStatus.NumberAvailable = newStatus.NumberAvailable
@@ -231,7 +253,8 @@ func aggregateDaemonSetStatus(object *unstructured.Unstructured, aggregatedStatu
 }
 
 func aggregateStatefulSetStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	statefulSet, err := helper.ConvertToStatefulSet(object)
+	statefulSet := &appsv1.StatefulSet{}
+	err := helper.ConvertToTypedObject(object, statefulSet)
 	if err != nil {
 		return nil, err
 	}
@@ -247,6 +270,12 @@ func aggregateStatefulSetStatus(object *unstructured.Unstructured, aggregatedSta
 		}
 		klog.V(3).Infof("Grab statefulSet(%s/%s) status from cluster(%s), availableReplicas: %d, currentReplicas: %d, readyReplicas: %d, replicas: %d, updatedReplicas: %d",
 			statefulSet.Namespace, statefulSet.Name, item.ClusterName, temp.AvailableReplicas, temp.CurrentReplicas, temp.ReadyReplicas, temp.Replicas, temp.UpdatedReplicas)
+
+		// always set 'observedGeneration' with current generation(.metadata.generation)
+		// which is the generation Karmada 'observed'.
+		// The 'observedGeneration' is mainly used by GitOps tools(like 'Argo CD') to assess the health status.
+		// For more details, please refer to https://argo-cd.readthedocs.io/en/stable/operator-manual/health/.
+		newStatus.ObservedGeneration = statefulSet.Generation
 		newStatus.AvailableReplicas += temp.AvailableReplicas
 		newStatus.CurrentReplicas += temp.CurrentReplicas
 		newStatus.ReadyReplicas += temp.ReadyReplicas
@@ -254,7 +283,8 @@ func aggregateStatefulSetStatus(object *unstructured.Unstructured, aggregatedSta
 		newStatus.UpdatedReplicas += temp.UpdatedReplicas
 	}
 
-	if oldStatus.AvailableReplicas == newStatus.AvailableReplicas &&
+	if oldStatus.ObservedGeneration == newStatus.ObservedGeneration &&
+		oldStatus.AvailableReplicas == newStatus.AvailableReplicas &&
 		oldStatus.CurrentReplicas == newStatus.CurrentReplicas &&
 		oldStatus.ReadyReplicas == newStatus.ReadyReplicas &&
 		oldStatus.Replicas == newStatus.Replicas &&
@@ -263,6 +293,7 @@ func aggregateStatefulSetStatus(object *unstructured.Unstructured, aggregatedSta
 		return object, nil
 	}
 
+	oldStatus.ObservedGeneration = newStatus.ObservedGeneration
 	oldStatus.AvailableReplicas = newStatus.AvailableReplicas
 	oldStatus.CurrentReplicas = newStatus.CurrentReplicas
 	oldStatus.ReadyReplicas = newStatus.ReadyReplicas
@@ -273,17 +304,20 @@ func aggregateStatefulSetStatus(object *unstructured.Unstructured, aggregatedSta
 }
 
 func aggregatePodStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	pod, err := helper.ConvertToPod(object)
+	pod := &corev1.Pod{}
+	err := helper.ConvertToTypedObject(object, pod)
 	if err != nil {
 		return nil, err
 	}
 
 	newStatus := &corev1.PodStatus{}
 	newStatus.ContainerStatuses = make([]corev1.ContainerStatus, 0)
-	runningFlag := true
+	podPhases := sets.NewString()
 	for _, item := range aggregatedStatusItems {
 		if item.Status == nil {
-			runningFlag = false
+			// maybe pod's status hasn't been collected yet, assume it's in pending state.
+			// Otherwise, it may affect the final aggregated state.
+			podPhases.Insert(string(corev1.PodPending))
 			continue
 		}
 
@@ -292,9 +326,7 @@ func aggregatePodStatus(object *unstructured.Unstructured, aggregatedStatusItems
 			return nil, err
 		}
 
-		if temp.Phase != corev1.PodRunning {
-			runningFlag = false
-		}
+		podPhases.Insert(string(temp.Phase))
 
 		for _, containerStatus := range temp.ContainerStatuses {
 			tempStatus := corev1.ContainerStatus{
@@ -307,10 +339,20 @@ func aggregatePodStatus(object *unstructured.Unstructured, aggregatedStatusItems
 			pod.Name, item.ClusterName, temp.Phase)
 	}
 
-	if runningFlag {
-		newStatus.Phase = corev1.PodRunning
-	} else {
+	// Check final phase in order: PodFailed-->PodPending-->PodRunning-->PodSucceeded
+	// Ignore to check PodUnknown as it has been deprecated since year 2015.
+	// More details please refer to: https://github.com/karmada-io/karmada/issues/2137
+	switch {
+	case podPhases.Has(string(corev1.PodFailed)):
+		newStatus.Phase = corev1.PodFailed
+	case podPhases.Has(string(corev1.PodPending)):
 		newStatus.Phase = corev1.PodPending
+	case podPhases.Has(string(corev1.PodRunning)):
+		newStatus.Phase = corev1.PodRunning
+	case podPhases.Has(string(corev1.PodSucceeded)):
+		newStatus.Phase = corev1.PodSucceeded
+	default:
+		klog.Errorf("SHOULD-NEVER-HAPPEN, maybe Pod added a new state that Karmada don't know about.")
 	}
 
 	if reflect.DeepEqual(pod.Status, *newStatus) {
@@ -323,7 +365,8 @@ func aggregatePodStatus(object *unstructured.Unstructured, aggregatedStatusItems
 }
 
 func aggregatePersistentVolumeClaimStatus(object *unstructured.Unstructured, aggregatedStatusItems []workv1alpha2.AggregatedStatusItem) (*unstructured.Unstructured, error) {
-	pvc, err := helper.ConvertToPersistentVolumeClaim(object)
+	pvc := &corev1.PersistentVolumeClaim{}
+	err := helper.ConvertToTypedObject(object, pvc)
 	if err != nil {
 		return nil, err
 	}

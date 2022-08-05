@@ -30,8 +30,8 @@ func getAllDefaultDependenciesInterpreter() map[schema.GroupVersionKind]dependen
 }
 
 func getDeploymentDependencies(object *unstructured.Unstructured) ([]configv1alpha1.DependentObjectReference, error) {
-	deploymentObj, err := helper.ConvertToDeployment(object)
-	if err != nil {
+	deploymentObj := &appsv1.Deployment{}
+	if err := helper.ConvertToTypedObject(object, deploymentObj); err != nil {
 		return nil, fmt.Errorf("failed to convert Deployment from unstructured object: %v", err)
 	}
 
@@ -44,7 +44,8 @@ func getDeploymentDependencies(object *unstructured.Unstructured) ([]configv1alp
 }
 
 func getJobDependencies(object *unstructured.Unstructured) ([]configv1alpha1.DependentObjectReference, error) {
-	jobObj, err := helper.ConvertToJob(object)
+	jobObj := &batchv1.Job{}
+	err := helper.ConvertToTypedObject(object, jobObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert Job from unstructured object: %v", err)
 	}
@@ -58,7 +59,8 @@ func getJobDependencies(object *unstructured.Unstructured) ([]configv1alpha1.Dep
 }
 
 func getCronJobDependencies(object *unstructured.Unstructured) ([]configv1alpha1.DependentObjectReference, error) {
-	cronjobObj, err := helper.ConvertToCronJob(object)
+	cronjobObj := &batchv1.CronJob{}
+	err := helper.ConvertToTypedObject(object, cronjobObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert CronJob from unstructured object: %v", err)
 	}
@@ -72,7 +74,8 @@ func getCronJobDependencies(object *unstructured.Unstructured) ([]configv1alpha1
 }
 
 func getPodDependencies(object *unstructured.Unstructured) ([]configv1alpha1.DependentObjectReference, error) {
-	podObj, err := helper.ConvertToPod(object)
+	podObj := &corev1.Pod{}
+	err := helper.ConvertToTypedObject(object, podObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert Pod from unstructured object: %v", err)
 	}
@@ -81,7 +84,8 @@ func getPodDependencies(object *unstructured.Unstructured) ([]configv1alpha1.Dep
 }
 
 func getDaemonSetDependencies(object *unstructured.Unstructured) ([]configv1alpha1.DependentObjectReference, error) {
-	daemonSetObj, err := helper.ConvertToDaemonSet(object)
+	daemonSetObj := &appsv1.DaemonSet{}
+	err := helper.ConvertToTypedObject(object, daemonSetObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert DaemonSet from unstructured object: %v", err)
 	}
@@ -95,7 +99,8 @@ func getDaemonSetDependencies(object *unstructured.Unstructured) ([]configv1alph
 }
 
 func getStatefulSetDependencies(object *unstructured.Unstructured) ([]configv1alpha1.DependentObjectReference, error) {
-	statefulSetObj, err := helper.ConvertToStatefulSet(object)
+	statefulSetObj := &appsv1.StatefulSet{}
+	err := helper.ConvertToTypedObject(object, statefulSetObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert StatefulSet from unstructured object: %v", err)
 	}
@@ -111,7 +116,9 @@ func getStatefulSetDependencies(object *unstructured.Unstructured) ([]configv1al
 func getDependenciesFromPodTemplate(podObj *corev1.Pod) ([]configv1alpha1.DependentObjectReference, error) {
 	dependentConfigMaps := getConfigMapNames(podObj)
 	dependentSecrets := getSecretNames(podObj)
+
 	dependPVCs := getPVCNames(podObj)
+	dependentSas := getServiceAccountNames(podObj)
 
 	var dependentObjectRefs []configv1alpha1.DependentObjectReference
 	for cm := range dependentConfigMaps {
@@ -141,6 +148,15 @@ func getDependenciesFromPodTemplate(podObj *corev1.Pod) ([]configv1alpha1.Depend
 		})
 	}
 
+	for sa := range dependentSas {
+		dependentObjectRefs = append(dependentObjectRefs, configv1alpha1.DependentObjectReference{
+			APIVersion: "v1",
+			Kind:       "ServiceAccount",
+			Namespace:  podObj.Namespace,
+			Name:       sa,
+		})
+	}
+
 	return dependentObjectRefs, nil
 }
 
@@ -150,6 +166,14 @@ func getSecretNames(pod *corev1.Pod) sets.String {
 		result.Insert(name)
 		return true
 	})
+	return result
+}
+
+func getServiceAccountNames(pod *corev1.Pod) sets.String {
+	result := sets.NewString()
+	if pod.Spec.ServiceAccountName != "" && pod.Spec.ServiceAccountName != "default" {
+		result.Insert(pod.Spec.ServiceAccountName)
+	}
 	return result
 }
 

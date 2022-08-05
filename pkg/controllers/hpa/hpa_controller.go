@@ -148,7 +148,7 @@ func (c *HorizontalPodAutoscalerController) getTargetPlacement(objRef autoscalin
 	if err := c.Client.Get(context.TODO(), namespacedName, binding); err != nil {
 		return nil, err
 	}
-	return util.GetBindingClusterNames(binding), nil
+	return util.GetBindingClusterNames(&binding.Spec), nil
 }
 
 // SetupWithManager creates a controller and register to controller manager.
@@ -173,8 +173,5 @@ func (c *HorizontalPodAutoscalerController) deleteWorks(workName string) error {
 			}
 		}
 	}
-	if len(errs) > 0 {
-		return utilerrors.NewAggregate(errs)
-	}
-	return nil
+	return utilerrors.NewAggregate(errs)
 }

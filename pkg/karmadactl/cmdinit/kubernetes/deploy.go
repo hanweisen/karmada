@@ -43,8 +43,8 @@ var (
 	defaultKubeConfig = filepath.Join(homeDir(), ".kube", "config")
 
 	defaultEtcdImage                  = "etcd:3.5.3-0"
-	defaultKubeAPIServerImage         = "kube-apiserver:v1.22.10"
-	defaultKubeControllerManagerImage = "kube-controller-manager:v1.22.10"
+	defaultKubeAPIServerImage         = "kube-apiserver:v1.24.2"
+	defaultKubeControllerManagerImage = "kube-controller-manager:v1.24.2"
 )
 
 const (
@@ -266,7 +266,7 @@ func (i *CommandInitOption) createCertsSecrets() error {
 		return fmt.Errorf("failure while serializing admin kubeConfig. %v", err)
 	}
 
-	kubeConfigSecret := i.SecretFromSpec(kubeConfigSecretAndMountName, corev1.SecretTypeOpaque, map[string]string{kubeConfigSecretAndMountName: string(configBytes)})
+	kubeConfigSecret := i.SecretFromSpec(KubeConfigSecretAndMountName, corev1.SecretTypeOpaque, map[string]string{KubeConfigSecretAndMountName: string(configBytes)})
 	if err = i.CreateSecret(kubeConfigSecret); err != nil {
 		return err
 	}

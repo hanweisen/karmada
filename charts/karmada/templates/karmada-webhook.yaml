@@ -34,10 +34,7 @@ spec:
         {{- include "karmada.webhook.labels" . | nindent 8 }}
         {{- include "karmada.webhook.podLabels" . | nindent 8 }}
     spec:
-      {{- with .Values.webhook.imagePullSecrets }}
-      imagePullSecrets:
-      {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "karmada.webhook.imagePullSecrets" . | nindent 6 }}
       serviceAccountName: {{ $name }}-webhook
       {{- with .Values.webhook.nodeSelector }}
       nodeSelector:
@@ -86,8 +83,7 @@ metadata:
   namespace: {{ include "karmada.namespace" . }}
 spec:
   selector:
-    {{- include "karmada.webhook.podLabels" . | nindent 8 }}
-    app: {{ $name }}-webhook
+    {{- include "karmada.webhook.labels" . | nindent 8 }}
   ports:
     - port: 443
       targetPort: 8443

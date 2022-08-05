@@ -265,22 +265,11 @@ func (d *ResourceDetector) Reconcile(key util.QueueKey) error {
 // EventFilter tells if an object should be take care of.
 //
 // All objects under Kubernetes reserved namespace should be ignored:
-// - kube-system
-// - kube-public
-// - kube-node-lease
+// - kube-*
 // All objects under Karmada reserved namespace should be ignored:
 // - karmada-system
 // - karmada-cluster
 // - karmada-es-*
-// All objects which API group defined by Karmada should be ignored:
-// - cluster.karmada.io
-// - policy.karmada.io
-//
-// The api objects listed above will be ignored by default, as we don't want users to manually input the things
-// they don't care when trying to skip something else.
-//
-// If '--skipped-propagating-apis' which used to specific the APIs should be ignored in addition to the defaults, is set,
-// the specified apis will be ignored as well.
 //
 // If '--skipped-propagating-namespaces' is specified, all APIs in the skipped-propagating-namespaces will be ignored.
 func (d *ResourceDetector) EventFilter(obj interface{}) bool {
@@ -299,20 +288,6 @@ func (d *ResourceDetector) EventFilter(obj interface{}) bool {
 		return false
 	}
 
-	if d.SkippedResourceConfig != nil {
-		if d.SkippedResourceConfig.GroupDisabled(clusterWideKey.Group) {
-			klog.V(4).Infof("Skip event for %s", clusterWideKey.Group)
-			return false
-		}
-		if d.SkippedResourceConfig.GroupVersionDisabled(clusterWideKey.GroupVersion()) {
-			klog.V(4).Infof("Skip event for %s", clusterWideKey.GroupVersion())
-			return false
-		}
-		if d.SkippedResourceConfig.GroupVersionKindDisabled(clusterWideKey.GroupVersionKind()) {
-			klog.V(4).Infof("Skip event for %s", clusterWideKey.GroupVersionKind())
-			return false
-		}
-	}
 	// if SkippedPropagatingNamespaces is set, skip object events in these namespaces.
 	if _, ok := d.SkippedPropagatingNamespaces[clusterWideKey.Namespace]; ok {
 		return false
@@ -345,6 +320,23 @@ func (d *ResourceDetector) OnAdd(obj interface{}) {
 
 // OnUpdate handles object update event and push the object to queue.
 func (d *ResourceDetector) OnUpdate(oldObj, newObj interface{}) {
+	unstructuredOldObj, err := helper.ToUnstructured(oldObj)
+	if err != nil {
+		klog.Errorf("Failed to transform oldObj, error: %v", err)
+		return
+	}
+
+	unstructuredNewObj, err := helper.ToUnstructured(newObj)
+	if err != nil {
+		klog.Errorf("Failed to transform newObj, error: %v", err)
+		return
+	}
+
+	if !SpecificationChanged(unstructuredOldObj, unstructuredNewObj) {
+		klog.V(4).Infof("Ignore update event of object (kind=%s, %s/%s) as specification no change", unstructuredOldObj.GetKind(), unstructuredOldObj.GetNamespace(), unstructuredOldObj.GetName())
+		return
+	}
+
 	d.OnAdd(newObj)
 }
 
@@ -372,8 +364,8 @@ func (d *ResourceDetector) LookForMatchedPolicy(object *unstructured.Unstructure
 
 	policyList := make([]*policyv1alpha1.PropagationPolicy, 0)
 	for index := range policyObjects {
-		policy, err := helper.ConvertToPropagationPolicy(policyObjects[index].(*unstructured.Unstructured))
-		if err != nil {
+		policy := &policyv1alpha1.PropagationPolicy{}
+		if err = helper.ConvertToTypedObject(policyObjects[index], policy); err != nil {
 			klog.Errorf("Failed to convert PropagationPolicy from unstructured object: %v", err)
 			return nil, err
 		}
@@ -410,8 +402,8 @@ func (d *ResourceDetector) LookForMatchedClusterPolicy(object *unstructured.Unst
 
 	policyList := make([]*policyv1alpha1.ClusterPropagationPolicy, 0)
 	for index := range policyObjects {
-		policy, err := helper.ConvertToClusterPropagationPolicy(policyObjects[index].(*unstructured.Unstructured))
-		if err != nil {
+		policy := &policyv1alpha1.ClusterPropagationPolicy{}
+		if err = helper.ConvertToTypedObject(policyObjects[index], policy); err != nil {
 			klog.Errorf("Failed to convert ClusterPropagationPolicy from unstructured object: %v", err)
 			return nil, err
 		}
@@ -438,7 +430,7 @@ func (d *ResourceDetector) ApplyPolicy(object *unstructured.Unstructured, object
 	klog.Infof("Applying policy(%s%s) for object: %s", policy.Namespace, policy.Name, objectKey)
 	defer func() {
 		if err != nil {
-			d.EventRecorder.Eventf(object, corev1.EventTypeWarning, workv1alpha2.EventReasonApplyPolicyFailed, "Apply policy(%s/%s) failed", policy.Namespace, policy.Name)
+			d.EventRecorder.Eventf(object, corev1.EventTypeWarning, workv1alpha2.EventReasonApplyPolicyFailed, "Apply policy(%s/%s) failed: %v", policy.Namespace, policy.Name, err)
 		} else {
 			d.EventRecorder.Eventf(object, corev1.EventTypeNormal, workv1alpha2.EventReasonApplyPolicySucceed, "Apply policy(%s/%s) succeed", policy.Namespace, policy.Name)
 		}
@@ -499,7 +491,7 @@ func (d *ResourceDetector) ApplyClusterPolicy(object *unstructured.Unstructured,
 	klog.Infof("Applying cluster policy(%s) for object: %s", policy.Name, objectKey)
 	defer func() {
 		if err != nil {
-			d.EventRecorder.Eventf(object, corev1.EventTypeWarning, workv1alpha2.EventReasonApplyPolicyFailed, "Apply cluster policy(%s) failed", policy.Name)
+			d.EventRecorder.Eventf(object, corev1.EventTypeWarning, workv1alpha2.EventReasonApplyPolicyFailed, "Apply cluster policy(%s) failed: %v", policy.Name, err)
 		} else {
 			d.EventRecorder.Eventf(object, corev1.EventTypeNormal, workv1alpha2.EventReasonApplyPolicySucceed, "Apply policy(%s/%s) succeed", policy.Name)
 		}
@@ -838,8 +830,8 @@ func (d *ResourceDetector) ReconcilePropagationPolicy(key util.QueueKey) error {
 	}
 
 	klog.Infof("PropagationPolicy(%s) has been added.", ckey.NamespaceKey())
-	propagationObject, err := helper.ConvertToPropagationPolicy(unstructuredObj.(*unstructured.Unstructured))
-	if err != nil {
+	propagationObject := &policyv1alpha1.PropagationPolicy{}
+	if err = helper.ConvertToTypedObject(unstructuredObj, propagationObject); err != nil {
 		klog.Errorf("Failed to convert PropagationPolicy(%s) from unstructured object: %v", ckey.NamespaceKey(), err)
 		return err
 	}
@@ -897,8 +889,8 @@ func (d *ResourceDetector) ReconcileClusterPropagationPolicy(key util.QueueKey) 
 	}
 
 	klog.Infof("Policy(%s) has been added", ckey.NamespaceKey())
-	propagationObject, err := helper.ConvertToClusterPropagationPolicy(unstructuredObj.(*unstructured.Unstructured))
-	if err != nil {
+	propagationObject := &policyv1alpha1.ClusterPropagationPolicy{}
+	if err = helper.ConvertToTypedObject(unstructuredObj, propagationObject); err != nil {
 		klog.Errorf("Failed to convert ClusterPropagationPolicy(%s) from unstructured object: %v", ckey.NamespaceKey(), err)
 		return err
 	}
@@ -998,12 +990,7 @@ func (d *ResourceDetector) HandleClusterPropagationPolicyDeletion(policyName str
 			}
 		}
 	}
-
-	if len(errs) > 0 {
-		return errors.NewAggregate(errs)
-	}
-
-	return nil
+	return errors.NewAggregate(errs)
 }
 
 // HandlePropagationPolicyCreation handles PropagationPolicy add event.

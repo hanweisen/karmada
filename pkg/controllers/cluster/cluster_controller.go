@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
+	"github.com/karmada-io/karmada/pkg/features"
 	"github.com/karmada-io/karmada/pkg/util"
 	utilhelper "github.com/karmada-io/karmada/pkg/util/helper"
 	"github.com/karmada-io/karmada/pkg/util/names"
@@ -39,16 +40,31 @@ const (
 
 var (
 	// UnreachableTaintTemplate is the taint for when a cluster becomes unreachable.
+	// Used for taint based eviction.
 	UnreachableTaintTemplate = &corev1.Taint{
 		Key:    clusterv1alpha1.TaintClusterUnreachable,
 		Effect: corev1.TaintEffectNoExecute,
 	}
 
-	// NotReadyTaintTemplate is the taint for when a cluster is not ready for
-	// executing resources.
+	// UnreachableTaintTemplateForSched is the taint for when a cluster becomes unreachable.
+	// Used for taint based schedule.
+	UnreachableTaintTemplateForSched = &corev1.Taint{
+		Key:    clusterv1alpha1.TaintClusterUnreachable,
+		Effect: corev1.TaintEffectNoSchedule,
+	}
+
+	// NotReadyTaintTemplate is the taint for when a cluster is not ready for executing resources.
+	// Used for taint based eviction.
 	NotReadyTaintTemplate = &corev1.Taint{
 		Key:    clusterv1alpha1.TaintClusterNotReady,
 		Effect: corev1.TaintEffectNoExecute,
+	}
+
+	// NotReadyTaintTemplateForSched is the taint for when a cluster is not ready for executing resources.
+	// Used for taint based schedule.
+	NotReadyTaintTemplateForSched = &corev1.Taint{
+		Key:    clusterv1alpha1.TaintClusterNotReady,
+		Effect: corev1.TaintEffectNoSchedule,
 	}
 )
 
@@ -144,7 +160,7 @@ func (c *Controller) Reconcile(ctx context.Context, req controllerruntime.Reques
 		return c.removeCluster(cluster)
 	}
 
-	return c.syncCluster(cluster)
+	return c.syncCluster(ctx, cluster)
 }
 
 // Start starts an asynchronous loop that monitors the status of cluster.
@@ -172,11 +188,18 @@ func (c *Controller) SetupWithManager(mgr controllerruntime.Manager) error {
 	})
 }
 
-func (c *Controller) syncCluster(cluster *clusterv1alpha1.Cluster) (controllerruntime.Result, error) {
+func (c *Controller) syncCluster(ctx context.Context, cluster *clusterv1alpha1.Cluster) (controllerruntime.Result, error) {
 	// create execution space
 	err := c.createExecutionSpace(cluster)
 	if err != nil {
 		c.EventRecorder.Event(cluster, corev1.EventTypeWarning, fmt.Sprintf("Failed %s", clusterv1alpha1.EventReasonCreateExecutionSpaceFailed), err.Error())
+		return controllerruntime.Result{Requeue: true}, err
+	}
+
+	// taint cluster by condition
+	err = c.taintClusterByCondition(ctx, cluster)
+	if err != nil {
+		c.EventRecorder.Event(cluster, corev1.EventTypeWarning, fmt.Sprintf("Failed %s", clusterv1alpha1.EventReasonTaintClusterByConditionFailed), err.Error())
 		return controllerruntime.Result{Requeue: true}, err
 	}
 
@@ -493,7 +516,7 @@ func (c *Controller) processTaintBaseEviction(ctx context.Context, cluster *clus
 	// Check eviction timeout against decisionTimestamp
 	switch observedReadyCondition.Status {
 	case metav1.ConditionFalse:
-		if decisionTimestamp.After(clusterHealth.readyTransitionTimestamp.Add(c.FailoverEvictionTimeout)) {
+		if features.FeatureGate.Enabled(features.Failover) && decisionTimestamp.After(clusterHealth.readyTransitionTimestamp.Add(c.FailoverEvictionTimeout)) {
 			// We want to update the taint straight away if Cluster is already tainted with the UnreachableTaint
 			taintToAdd := *NotReadyTaintTemplate
 			if err := utilhelper.UpdateClusterControllerTaint(ctx, c.Client, []*corev1.Taint{&taintToAdd}, []*corev1.Taint{UnreachableTaintTemplate}, cluster); err != nil {
@@ -501,7 +524,7 @@ func (c *Controller) processTaintBaseEviction(ctx context.Context, cluster *clus
 			}
 		}
 	case metav1.ConditionUnknown:
-		if decisionTimestamp.After(clusterHealth.probeTimestamp.Add(c.FailoverEvictionTimeout)) {
+		if features.FeatureGate.Enabled(features.Failover) && decisionTimestamp.After(clusterHealth.probeTimestamp.Add(c.FailoverEvictionTimeout)) {
 			// We want to update the taint straight away if Cluster is already tainted with the UnreachableTaint
 			taintToAdd := *UnreachableTaintTemplate
 			if err := utilhelper.UpdateClusterControllerTaint(ctx, c.Client, []*corev1.Taint{&taintToAdd}, []*corev1.Taint{NotReadyTaintTemplate}, cluster); err != nil {
@@ -513,5 +536,30 @@ func (c *Controller) processTaintBaseEviction(ctx context.Context, cluster *clus
 			klog.ErrorS(err, "Failed to remove taints from cluster, will retry in next iteration.", "cluster", cluster.Name)
 		}
 	}
+	return nil
+}
+
+func (c *Controller) taintClusterByCondition(ctx context.Context, cluster *clusterv1alpha1.Cluster) error {
+	currentReadyCondition := meta.FindStatusCondition(cluster.Status.Conditions, clusterv1alpha1.ClusterConditionReady)
+
+	if currentReadyCondition != nil {
+		switch currentReadyCondition.Status {
+		case metav1.ConditionFalse:
+			// Add NotReadyTaintTemplateForSched taint immediately.
+			if err := utilhelper.UpdateClusterControllerTaint(ctx, c.Client, []*corev1.Taint{NotReadyTaintTemplateForSched}, []*corev1.Taint{UnreachableTaintTemplateForSched}, cluster); err != nil {
+				klog.ErrorS(err, "Failed to instantly update UnreachableTaintForSched to NotReadyTaintForSched, will try again in the next cycle.", "cluster", cluster.Name)
+			}
+		case metav1.ConditionUnknown:
+			// Add UnreachableTaintTemplateForSched taint immediately.
+			if err := utilhelper.UpdateClusterControllerTaint(ctx, c.Client, []*corev1.Taint{UnreachableTaintTemplateForSched}, []*corev1.Taint{NotReadyTaintTemplateForSched}, cluster); err != nil {
+				klog.ErrorS(err, "Failed to instantly swap NotReadyTaintForSched to UnreachableTaintForSched, will try again in the next cycle.", "cluster", cluster.Name)
+			}
+		case metav1.ConditionTrue:
+			if err := utilhelper.UpdateClusterControllerTaint(ctx, c.Client, nil, []*corev1.Taint{NotReadyTaintTemplateForSched, UnreachableTaintTemplateForSched}, cluster); err != nil {
+				klog.ErrorS(err, "Failed to remove schedule taints from cluster, will retry in next iteration.", "cluster", cluster.Name)
+			}
+		}
+	}
+
 	return nil
 }

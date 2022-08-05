@@ -30,11 +30,13 @@ import (
 	"k8s.io/kubectl/pkg/cmd/get"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/util/interrupt"
+	"k8s.io/kubectl/pkg/util/templates"
 	utilpointer "k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
+	karmadaclientset "github.com/karmada-io/karmada/pkg/generated/clientset/versioned"
 	"github.com/karmada-io/karmada/pkg/karmadactl/options"
 	"github.com/karmada-io/karmada/pkg/util/gclient"
 	"github.com/karmada-io/karmada/pkg/util/helper"
@@ -47,10 +49,6 @@ const (
 )
 
 var (
-	getIn  = os.Stdin
-	getOut = os.Stdout
-	getErr = os.Stderr
-
 	podColumns = []metav1.TableColumnDefinition{
 		{Name: "CLUSTER", Type: "string", Format: "", Priority: 0},
 		{Name: "ADOPTION", Type: "string", Format: "", Priority: 0},
@@ -58,20 +56,43 @@ var (
 	eventColumn = metav1.TableColumnDefinition{Name: "EVENT", Type: "string", Format: "", Priority: 0}
 
 	getShort = `Display one or many resources`
+
+	getExample = templates.Examples(`
+		# List all pods in ps output format
+		%[1]s get pods
+	
+		# List all pods in ps output format with more information (such as node name)
+		%[1]s get pods -o wide
+	
+		# List all pods of member1 cluster in ps output format
+		%[1]s get pods -C member1
+	
+		# List a single replicasets controller with specified NAME in ps output format
+		%[1]s get replicasets nginx
+	
+		# List deployments in JSON output format, in the "v1" version of the "apps" API group
+		%[1]s get deployments.v1.apps -o json
+	
+		# Return only the phase value of the specified resource
+		%[1]s get -o template deployment/nginx -C member1 --template={{.spec.replicas}}
+	
+		# List all replication controllers and services together in ps output format
+		%[1]s get rs,services
+	
+		# List one or more resources by their type and names
+		%[1]s get rs/nginx-cb87b6d88 service/kubernetes`)
 )
 
 // NewCmdGet New get command
-func NewCmdGet(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Command {
-	ioStreams := genericclioptions.IOStreams{In: getIn, Out: getOut, ErrOut: getErr}
-	o := NewCommandGetOptions("karmadactl", ioStreams)
+func NewCmdGet(karmadaConfig KarmadaConfig, parentCommand string, streams genericclioptions.IOStreams) *cobra.Command {
+	o := NewCommandGetOptions(streams)
 	cmd := &cobra.Command{
-		Use:                   "get [NAME | -l label | -n namespace]  [flags]",
-		DisableFlagsInUseLine: true,
-		Short:                 getShort,
-		SilenceUsage:          true,
-		Example:               getExample(parentCommand),
+		Use:          "get [NAME | -l label | -n namespace]  [flags]",
+		Short:        getShort,
+		SilenceUsage: true,
+		Example:      fmt.Sprintf(getExample, parentCommand),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := o.Complete(); err != nil {
+			if err := o.Complete(karmadaConfig); err != nil {
 				return err
 			}
 			if err := o.Validate(cmd); err != nil {
@@ -87,10 +108,9 @@ func NewCmdGet(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Command
 	o.GlobalCommandOptions.AddFlags(cmd.Flags())
 	o.PrintFlags.AddFlags(cmd)
 
-	cmd.Flags().StringVarP(&o.Namespace, "namespace", "n", "default", "-n=namespace or -n namespace")
+	cmd.Flags().StringVarP(&o.Namespace, "namespace", "n", o.Namespace, "-n=namespace or -n namespace")
 	cmd.Flags().StringVarP(&o.LabelSelector, "labels", "l", "", "-l=label or -l label")
 	cmd.Flags().StringSliceVarP(&o.Clusters, "clusters", "C", []string{}, "-C=member1,member2")
-	cmd.Flags().StringVar(&o.ClusterNamespace, "cluster-namespace", options.DefaultKarmadaClusterNamespace, "Namespace in the control plane where member cluster are stored.")
 	cmd.Flags().BoolVarP(&o.AllNamespaces, "all-namespaces", "A", o.AllNamespaces, "If present, list the requested object(s) across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	cmd.Flags().BoolVar(&o.IgnoreNotFound, "ignore-not-found", o.IgnoreNotFound, "If the requested object does not exist the command will return exit code 0.")
 	cmd.Flags().BoolVarP(&o.Watch, "watch", "w", o.Watch, "After listing/getting the requested object, watch for changes. Uninitialized objects are excluded if no object name is provided.")
@@ -104,9 +124,6 @@ func NewCmdGet(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Command
 type CommandGetOptions struct {
 	// global flags
 	options.GlobalCommandOptions
-
-	// ClusterNamespace holds the namespace name where the member cluster objects are stored.
-	ClusterNamespace string
 
 	Clusters []string
 
@@ -141,10 +158,9 @@ type CommandGetOptions struct {
 }
 
 // NewCommandGetOptions returns a GetOptions with default chunk size 500.
-func NewCommandGetOptions(parent string, streams genericclioptions.IOStreams) *CommandGetOptions {
+func NewCommandGetOptions(streams genericclioptions.IOStreams) *CommandGetOptions {
 	return &CommandGetOptions{
 		PrintFlags:  get.NewGetPrintFlags(),
-		CmdParent:   parent,
 		IOStreams:   streams,
 		ChunkSize:   500,
 		ServerPrint: true,
@@ -152,8 +168,16 @@ func NewCommandGetOptions(parent string, streams genericclioptions.IOStreams) *C
 }
 
 // Complete takes the command arguments and infers any remaining options.
-func (g *CommandGetOptions) Complete() error {
+func (g *CommandGetOptions) Complete(karmadaConfig KarmadaConfig) error {
 	newScheme := gclient.NewSchema()
+
+	if g.Namespace == "" {
+		namespace, _, err := karmadaConfig.GetClientConfig(g.KarmadaContext, g.KubeConfig).Namespace()
+		if err != nil {
+			return err
+		}
+		g.Namespace = namespace
+	}
 
 	templateArg := ""
 	if g.PrintFlags.TemplateFlags != nil && g.PrintFlags.TemplateFlags.TemplateArgument != nil {
@@ -263,8 +287,11 @@ func (g *CommandGetOptions) Run(karmadaConfig KarmadaConfig, cmd *cobra.Command,
 
 	wg.Add(len(g.Clusters))
 	for idx := range g.Clusters {
-		g.setClusterProxyInfo(karmadaRestConfig, g.Clusters[idx], clusterInfos)
-		f := getFactory(g.Clusters[idx], clusterInfos)
+		err = g.setClusterProxyInfo(karmadaRestConfig, g.Clusters[idx], clusterInfos)
+		if err != nil {
+			return err
+		}
+		f := getFactory(g.Clusters[idx], clusterInfos, "")
 		go g.getObjInfo(&wg, &mux, f, g.Clusters[idx], &objs, &watchObjs, &allErrs, args)
 	}
 	wg.Wait()
@@ -608,7 +635,7 @@ func (g *CommandGetOptions) watch(watchObjs []WatchObj) error {
 	return nil
 }
 
-//watchMultiClusterObj watch objects in multi clusters by goroutines
+// watchMultiClusterObj watch objects in multi clusters by goroutines
 func (g *CommandGetOptions) watchMultiClusterObj(watchObjs []WatchObj, mapping *meta.RESTMapping, outputObjects *bool, printer printers.ResourcePrinterFunc) {
 	var wg sync.WaitGroup
 
@@ -858,7 +885,7 @@ func clusterInfoInit(g *CommandGetOptions, karmadaConfig KarmadaConfig, clusterI
 	return karmadaRestConfig, nil
 }
 
-func getFactory(clusterName string, clusterInfos map[string]*ClusterInfo) cmdutil.Factory {
+func getFactory(clusterName string, clusterInfos map[string]*ClusterInfo, namespace string) cmdutil.Factory {
 	kubeConfigFlags := NewConfigFlags(true).WithDeprecatedPasswordFlag()
 	// Build member cluster kubeConfigFlags
 	kubeConfigFlags.APIServer = stringptr(clusterInfos[clusterName].APIEndpoint)
@@ -867,6 +894,10 @@ func getFactory(clusterName string, clusterInfos map[string]*ClusterInfo) cmduti
 	kubeConfigFlags.KubeConfig = stringptr(clusterInfos[clusterName].KubeConfig)
 	kubeConfigFlags.Context = stringptr(clusterInfos[clusterName].Context)
 	kubeConfigFlags.usePersistentConfig = true
+
+	if namespace != "" {
+		kubeConfigFlags.Namespace = stringptr(namespace)
+	}
 
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
 	return cmdutil.NewFactory(matchVersionKubeConfigFlags)
@@ -936,7 +967,15 @@ func (g *CommandGetOptions) getRBInKarmada(namespace string, config *rest.Config
 }
 
 // setClusterProxyInfo set proxy information of cluster
-func (g *CommandGetOptions) setClusterProxyInfo(karmadaRestConfig *rest.Config, name string, clusterInfos map[string]*ClusterInfo) {
+func (g *CommandGetOptions) setClusterProxyInfo(karmadaRestConfig *rest.Config, name string, clusterInfos map[string]*ClusterInfo) error {
+	clusterClient := karmadaclientset.NewForConfigOrDie(karmadaRestConfig).ClusterV1alpha1().Clusters()
+
+	// check if the cluster exists in the Karmada control plane
+	_, err := clusterClient.Get(context.TODO(), name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
 	clusterInfos[name].APIEndpoint = karmadaRestConfig.Host + fmt.Sprintf(proxyURL, name)
 	clusterInfos[name].KubeConfig = g.KubeConfig
 	clusterInfos[name].Context = g.KarmadaContext
@@ -948,6 +987,7 @@ func (g *CommandGetOptions) setClusterProxyInfo(karmadaRestConfig *rest.Config, 
 			clusterInfos[name].KubeConfig = defaultKubeConfig
 		}
 	}
+	return nil
 }
 
 // getClusterInKarmada get cluster info in karmada cluster
@@ -1017,34 +1057,6 @@ func Exists(path string) bool {
 		return os.IsExist(err)
 	}
 	return true
-}
-
-func getExample(parentCommand string) string {
-	example := `
-# List all pods in ps output format` + "\n" +
-		fmt.Sprintf("%s get pods", parentCommand) + `
-
-# List all pods in ps output format with more information (such as node name)` + "\n" +
-		fmt.Sprintf("%s get pods -o wide", parentCommand) + `
-
-# List all pods of member1 cluster in ps output format` + "\n" +
-		fmt.Sprintf("%s get pods -C member1", parentCommand) + `
-
-# List a single replicasets controller with specified NAME in ps output format ` + "\n" +
-		fmt.Sprintf("%s get replicasets nginx", parentCommand) + `
-
-# List deployments in JSON output format, in the "v1" version of the "apps" API group ` + "\n" +
-		fmt.Sprintf("%s get deployments.v1.apps -o json", parentCommand) + `
-
-# Return only the phase value of the specified resource ` + "\n" +
-		fmt.Sprintf("%s get -o template deployment/nginx -C member1 --template={{.spec.replicas}}", parentCommand) + `
-
-# List all replication controllers and services together in ps output format ` + "\n" +
-		fmt.Sprintf("%s get rs,services", parentCommand) + `
-
-# List one or more resources by their type and names ` + "\n" +
-		fmt.Sprintf("%s get rs/nginx-cb87b6d88 service/kubernetes", parentCommand)
-	return example
 }
 
 // skipPrinter allows conditionally suppressing object output via the output field.

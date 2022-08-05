@@ -3,14 +3,19 @@ package karmadactl
 import (
 	"flag"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/tools/clientcmd"
 	apiserverflag "k8s.io/component-base/cli/flag"
 	"k8s.io/klog/v2"
+	"k8s.io/kubectl/pkg/util/templates"
 
+	"github.com/karmada-io/karmada/pkg/karmadactl/addons"
 	"github.com/karmada-io/karmada/pkg/karmadactl/cmdinit"
+	"github.com/karmada-io/karmada/pkg/karmadactl/options"
 	"github.com/karmada-io/karmada/pkg/version/sharedcommand"
 )
 
@@ -46,19 +51,56 @@ func NewKarmadaCtlCommand(cmdUse, parentCommand string) *cobra.Command {
 	_ = flag.CommandLine.Parse(nil)
 
 	karmadaConfig := NewKarmadaConfig(clientcmd.NewDefaultPathOptions())
-	rootCmd.AddCommand(NewCmdJoin(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdUnjoin(karmadaConfig, parentCommand))
+	ioStreams := genericclioptions.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr}
+	groups := templates.CommandGroups{
+		{
+			Message: "Basic Commands:",
+			Commands: []*cobra.Command{
+				NewCmdGet(karmadaConfig, parentCommand, ioStreams),
+			},
+		},
+		{
+			Message: "Cluster Registeration Commands:",
+			Commands: []*cobra.Command{
+				cmdinit.NewCmdInit(parentCommand),
+				NewCmdDeInit(parentCommand),
+				addons.NewCommandAddons(parentCommand),
+				NewCmdJoin(karmadaConfig, parentCommand),
+				NewCmdUnjoin(karmadaConfig, parentCommand),
+			},
+		},
+		{
+			Message: "Cluster Management Commands:",
+			Commands: []*cobra.Command{
+				NewCmdCordon(karmadaConfig, parentCommand),
+				NewCmdUncordon(karmadaConfig, parentCommand),
+				NewCmdTaint(karmadaConfig, parentCommand),
+			},
+		},
+		{
+			Message: "Troubleshooting and Debugging Commands:",
+			Commands: []*cobra.Command{
+				NewCmdLogs(karmadaConfig, parentCommand, ioStreams),
+				NewCmdExec(karmadaConfig, parentCommand, ioStreams),
+				NewCmdDescribe(karmadaConfig, parentCommand, ioStreams),
+			},
+		},
+		{
+			Message: "Advanced Commands:",
+			Commands: []*cobra.Command{
+				NewCmdApply(karmadaConfig, parentCommand, ioStreams),
+				NewCmdPromote(karmadaConfig, parentCommand),
+			},
+		},
+	}
+	groups.Add(rootCmd)
+
+	filters := []string{"options"}
+
 	rootCmd.AddCommand(sharedcommand.NewCmdVersion(parentCommand))
-	rootCmd.AddCommand(NewCmdCordon(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdUncordon(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdGet(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdTaint(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdPromote(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdLogs(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdExec(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(NewCmdDescribe(karmadaConfig, parentCommand))
-	rootCmd.AddCommand(cmdinit.NewCmdInit(parentCommand))
-	rootCmd.AddCommand(NewCmdDeInit(parentCommand))
+	rootCmd.AddCommand(options.NewCmdOptions(parentCommand, ioStreams.Out))
+
+	templates.ActsAsRootCommand(rootCmd, filters, groups...)
 
 	return rootCmd
 }

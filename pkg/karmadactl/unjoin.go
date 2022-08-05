@@ -2,7 +2,6 @@ package karmadactl
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	kubeclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"k8s.io/kubectl/pkg/util/templates"
 
 	karmadaclientset "github.com/karmada-io/karmada/pkg/generated/clientset/versioned"
 	"github.com/karmada-io/karmada/pkg/karmadactl/options"
@@ -22,8 +22,17 @@ import (
 )
 
 var (
-	unjoinShort = `Remove the registration of a cluster from control plane`
-	unjoinLong  = `Unjoin removes the registration of a cluster from control plane.`
+	unjoinShort   = `Remove the registration of a cluster from control plane`
+	unjoinLong    = `Unjoin removes the registration of a cluster from control plane.`
+	unjoinExample = templates.Examples(`
+		# Unjoin cluster from karamada control plane, but not to remove resources created by karmada in the unjoining cluster
+		%[1]s unjoin CLUSTER_NAME
+	
+		# Unjoin cluster from karamada control plane and attempt to remove resources created by karmada in the unjoining cluster
+		%[1]s unjoin CLUSTER_NAME --cluster-kubeconfig=<KUBECONFIG>
+			
+		# Unjoin cluster from karamada control plane with timeout
+		%[1]s unjoin CLUSTER_NAME --cluster-kubeconfig=<KUBECONFIG> --wait 2m`)
 )
 
 // NewCmdUnjoin defines the `unjoin` command that removes registration of a cluster from control plane.
@@ -34,13 +43,13 @@ func NewCmdUnjoin(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Comm
 		Use:          "unjoin CLUSTER_NAME --cluster-kubeconfig=<KUBECONFIG>",
 		Short:        unjoinShort,
 		Long:         unjoinLong,
-		Example:      unjoinExample(parentCommand),
+		Example:      fmt.Sprintf(unjoinExample, parentCommand),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := opts.Complete(args); err != nil {
 				return err
 			}
-			if err := opts.Validate(); err != nil {
+			if err := opts.Validate(args); err != nil {
 				return err
 			}
 			if err := RunUnjoin(karmadaConfig, opts); err != nil {
@@ -56,24 +65,11 @@ func NewCmdUnjoin(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Comm
 	return cmd
 }
 
-func unjoinExample(parentCommand string) string {
-	example := `
-# Unjoin cluster from karamada control plane, but not to remove resources created by karmada in the unjoining cluster` + "\n" +
-		fmt.Sprintf("%s unjoin CLUSTER_NAME", parentCommand) + `
-
-# Unjoin cluster from karamada control plane and attempt to remove resources created by karmada in the unjoining cluster` + "\n" +
-		fmt.Sprintf("%s unjoin CLUSTER_NAME --cluster-kubeconfig=<KUBECONFIG>", parentCommand) + `
-		
-# Unjoin cluster from karamada control plane with timeout` + "\n" +
-		fmt.Sprintf("%s unjoin CLUSTER_NAME --cluster-kubeconfig=<KUBECONFIG> --wait 2m", parentCommand)
-	return example
-}
-
 // CommandUnjoinOption holds all command options.
 type CommandUnjoinOption struct {
 	options.GlobalCommandOptions
 
-	// ClusterNamespace holds the namespace name where the member cluster objects are stored.
+	// ClusterNamespace holds namespace where the member cluster secrets are stored
 	ClusterNamespace string
 
 	// ClusterName is the cluster's name that we are going to join with.
@@ -97,10 +93,9 @@ type CommandUnjoinOption struct {
 // Complete ensures that options are valid and marshals them if necessary.
 func (j *CommandUnjoinOption) Complete(args []string) error {
 	// Get cluster name from the command args.
-	if len(args) == 0 {
-		return errors.New("cluster name is required")
+	if len(args) > 0 {
+		j.ClusterName = args[0]
 	}
-	j.ClusterName = args[0]
 
 	// If '--cluster-context' not specified, take the cluster name as the context.
 	if len(j.ClusterContext) == 0 {
@@ -111,7 +106,13 @@ func (j *CommandUnjoinOption) Complete(args []string) error {
 }
 
 // Validate ensures that command unjoin options are valid.
-func (j *CommandUnjoinOption) Validate() error {
+func (j *CommandUnjoinOption) Validate(args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("only the cluster name is allowed as an argument")
+	}
+	if len(j.ClusterName) == 0 {
+		return fmt.Errorf("cluster name is required")
+	}
 	if j.Wait < 0 {
 		return fmt.Errorf(" --wait %v  must be a positive duration, e.g. 1m0s ", j.Wait)
 	}
@@ -122,7 +123,7 @@ func (j *CommandUnjoinOption) Validate() error {
 func (j *CommandUnjoinOption) AddFlags(flags *pflag.FlagSet) {
 	j.GlobalCommandOptions.AddFlags(flags)
 
-	flags.StringVar(&j.ClusterNamespace, "cluster-namespace", options.DefaultKarmadaClusterNamespace, "Namespace in the control plane where member cluster are stored.")
+	flags.StringVar(&j.ClusterNamespace, "cluster-namespace", options.DefaultKarmadaClusterNamespace, "Namespace in the control plane where member cluster secrets are stored.")
 	flags.StringVar(&j.ClusterContext, "cluster-context", "",
 		"Context name of cluster in kubeconfig. Only works when there are multiple contexts in the kubeconfig.")
 	flags.StringVar(&j.ClusterKubeConfig, "cluster-kubeconfig", "",

@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/kubectl/pkg/util/templates"
 
 	"github.com/karmada-io/karmada/pkg/karmadactl/cmdinit/utils"
 )
@@ -17,6 +18,12 @@ import (
 const (
 	karmadaBootstrappingLabelKey = "karmada.io/bootstrapping"
 	karmadaNodeLabel             = "karmada.io/etcd"
+)
+
+var (
+	deInitExample = templates.Examples(`
+		# Remove Karmada from the Kubernetes cluster.
+		%[1]s deinit`)
 )
 
 // CommandDeInitOption options for deinit.
@@ -28,6 +35,7 @@ type CommandDeInitOption struct {
 
 	// DryRun tells if run the command in dry-run mode, without making any server requests.
 	DryRun bool
+	Force  bool
 
 	KubeClientSet *kubernetes.Clientset
 }
@@ -37,9 +45,9 @@ func NewCmdDeInit(parentCommand string) *cobra.Command {
 	opts := CommandDeInitOption{}
 	cmd := &cobra.Command{
 		Use:          "deinit",
-		Short:        "removes Karmada from Kubernetes",
-		Long:         "removes Karmada from Kubernetes",
-		Example:      deInitExample(parentCommand),
+		Short:        "Removes Karmada from Kubernetes",
+		Long:         "Removes Karmada from Kubernetes",
+		Example:      fmt.Sprintf(deInitExample, parentCommand),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := opts.Complete(); err != nil {
@@ -57,14 +65,8 @@ func NewCmdDeInit(parentCommand string) *cobra.Command {
 	flags.StringVar(&opts.KubeConfig, "kubeconfig", "", "Path to the host cluster kubeconfig file.")
 	flags.StringVar(&opts.Context, "context", "", "The name of the kubeconfig context to use")
 	flags.BoolVar(&opts.DryRun, "dry-run", false, "Run the command in dry-run mode, without making any server requests.")
+	flags.BoolVarP(&opts.Force, "force", "f", false, "Reset cluster without prompting for confirmation.")
 	return cmd
-}
-
-func deInitExample(parentCommand string) string {
-	example := `
-# Remove Karmada from the Kubernetes cluster` + "\n" +
-		fmt.Sprintf("%s deinit", parentCommand)
-	return example
 }
 
 // Complete the conditions required to be able to run deinit.
@@ -282,7 +284,7 @@ func deleteConfirmation() bool {
 func (o *CommandDeInitOption) Run() error {
 	fmt.Println("removes Karmada from Kubernetes")
 	// delete confirmation,exit the delete action when false.
-	if !deleteConfirmation() {
+	if !o.Force && !deleteConfirmation() {
 		return nil
 	}
 

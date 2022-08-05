@@ -1,6 +1,6 @@
 # Aggregated Kubernetes API Endpoint
 
-The newly introduced [karmada-aggregated-apiserver](https://github.com/karmada-io/karmada/blob/master/cmd/aggregated-apiserver/main.go) component aggregates all registered clusters and allows users to access member clusters through Karmada by the proxy endpoint,
+The newly introduced [karmada-aggregated-apiserver](https://github.com/karmada-io/karmada/blob/master/cmd/aggregated-apiserver/main.go) component aggregates all registered clusters and allows users to access member clusters through Karmada by the proxy endpoint.
 
 For detailed discussion topic, see [here](https://github.com/karmada-io/karmada/discussions/1077).
 
@@ -12,10 +12,10 @@ To quickly experience this feature, we experimented with karmada-apiserver certi
 
 ### Step1: Obtain the karmada-apiserver Certificate
 
-For Karmada deployed using `hack/local-up-karmada.sh`, you can directly copy it from the `/root/.kube/` directory.
+For Karmada deployed using `hack/local-up-karmada.sh`, you can directly copy it from the `$HOME/.kube/` directory.
 
 ```shell
-cp /root/.kube/karmada.config karmada-apiserver.config
+cp $HOME/.kube/karmada.config karmada-apiserver.config
 ```
 
 ### Step2: Grant permission to user `system:admin`
@@ -63,7 +63,7 @@ subjects:
 </details>
 
 ```shell
-kubectl --kubeconfig /root/.kube/karmada.config --context karmada-apiserver apply -f cluster-proxy-rbac.yaml
+kubectl --kubeconfig $HOME/.kube/karmada.config --context karmada-apiserver apply -f cluster-proxy-rbac.yaml
 ```
 
 ### Step3: Access member clusters
@@ -74,7 +74,7 @@ Run the below command (replace `{clustername}` with your actual cluster name):
 kubectl --kubeconfig karmada-apiserver.config get --raw /apis/cluster.karmada.io/v1alpha1/clusters/{clustername}/proxy/api/v1/nodes
 ```
 
-Or append `/apis/cluster.karmada.io/v1alpha1/clusters/{clustername}/proxy ` to the server address of karmada-apiserver.config, and then you can directly use:
+Or append `/apis/cluster.karmada.io/v1alpha1/clusters/{clustername}/proxy` to the server address of karmada-apiserver.config, and then you can directly use:
 
 ```shell
 kubectl --kubeconfig karmada-apiserver.config get node
@@ -95,13 +95,13 @@ If the serviceaccount has been created in your environment, you can skip this st
 Create a serviceaccount that does not have any permission:
 
 ```shell
-kubectl --kubeconfig /root/.kube/members.config --context member1 create serviceaccount tom
+kubectl --kubeconfig $HOME/.kube/members.config --context member1 create serviceaccount tom
 ```
 
-### Step2: Create ServiceAccount in karmada control plane
+### Step2: Create ServiceAccount in Karmada control plane
 
 ```shell
-kubectl --kubeconfig /root/.kube/karmada.config --context karmada-apiserver create serviceaccount tom
+kubectl --kubeconfig $HOME/.kube/karmada.config --context karmada-apiserver create serviceaccount tom
 ```
 
 In order to grant serviceaccount the `clusters/proxy` permission, apply the following rbac yaml file:
@@ -149,7 +149,7 @@ subjects:
 </details>
 
 ```shell
-kubectl --kubeconfig /root/.kube/karmada.config --context karmada-apiserver apply -f cluster-proxy-rbac.yaml
+kubectl --kubeconfig $HOME/.kube/karmada.config --context karmada-apiserver apply -f cluster-proxy-rbac.yaml
 ```
 
 ### Step3: Access member1 cluster
@@ -167,7 +167,7 @@ apiVersion: v1
 clusters:
 - cluster:
     insecure-skip-tls-verify: true
-    server: {karmada-apiserver-address} # Replace {karmada-apiserver-address} with karmada-apiserver-address. You can find it in /root/.kube/karmada.config file.
+    server: {karmada-apiserver-address} # Replace {karmada-apiserver-address} with karmada-apiserver-address. You can find it in $HOME/.kube/karmada.config file.
   name: tom
 contexts:
 - context:
@@ -188,7 +188,7 @@ Run the command below to access member1 cluster:
 kubectl --kubeconfig tom.config get --raw /apis/cluster.karmada.io/v1alpha1/clusters/member1/proxy/apis
 ```
 
-We can found that we were able to access, but run the command below:
+We can find that we were able to access, but run the command below:
 
 ```shell
 kubectl --kubeconfig tom.config get --raw /apis/cluster.karmada.io/v1alpha1/clusters/member1/proxy/api/v1/nodes
@@ -236,7 +236,7 @@ subjects:
 </details>
 
 ```shell
-kubectl --kubeconfig /root/.kube/members.config --context member1 apply -f member1-rbac.yaml
+kubectl --kubeconfig $HOME/.kube/members.config --context member1 apply -f member1-rbac.yaml
 ```
 
 Run the command that failed in the previous step again:
@@ -247,7 +247,7 @@ kubectl --kubeconfig tom.config get --raw /apis/cluster.karmada.io/v1alpha1/clus
 
 The access will be successful.
 
-Or we can append `/apis/cluster.karmada.io/v1alpha1/clusters/member1/proxy ` to the server address of tom.config, and then you can directly use:
+Or we can append `/apis/cluster.karmada.io/v1alpha1/clusters/member1/proxy` to the server address of tom.config, and then you can directly use:
 
 ```shell
 kubectl --kubeconfig tom.config get node

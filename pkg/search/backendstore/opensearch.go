@@ -9,15 +9,15 @@ import (
 	"sync"
 	"time"
 
-	opensearch "github.com/opensearch-project/opensearch-go"
+	"github.com/opensearch-project/opensearch-go"
 	"github.com/opensearch-project/opensearch-go/opensearchapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/cache"
-	klog "k8s.io/klog/v2"
+	"k8s.io/klog/v2"
 
 	clusterv1alpha1 "github.com/karmada-io/karmada/pkg/apis/cluster/v1alpha1"
-	"github.com/karmada-io/karmada/pkg/apis/search/v1alpha1"
+	searchv1alpha1 "github.com/karmada-io/karmada/pkg/apis/search/v1alpha1"
 )
 
 var defaultPrefix = "kubernetes"
@@ -104,7 +104,7 @@ type OpenSearch struct {
 }
 
 // NewOpenSearch returns a new OpenSearch
-func NewOpenSearch(cluster string, cfg *v1alpha1.BackendStoreConfig) (*OpenSearch, error) {
+func NewOpenSearch(cluster string, cfg *searchv1alpha1.BackendStoreConfig) (*OpenSearch, error) {
 	klog.Infof("create openserch backend store: %s", cluster)
 	os := &OpenSearch{
 		cluster: cluster,
@@ -149,12 +149,12 @@ func (os *OpenSearch) delete(obj interface{}) {
 		return
 	}
 
-	delete := opensearchapi.DeleteRequest{
+	deleteRequest := opensearchapi.DeleteRequest{
 		Index:      indexName,
 		DocumentID: string(us.GetUID()),
 	}
 
-	resp, err := delete.Do(context.Background(), os.client)
+	resp, err := deleteRequest.Do(context.Background(), os.client)
 	if err != nil {
 		klog.Errorf("cannot delete: %v", err)
 		return
@@ -258,7 +258,7 @@ func (os *OpenSearch) indexName(us *unstructured.Unstructured) (string, error) {
 	return name, nil
 }
 
-func (os *OpenSearch) initClient(bsc *v1alpha1.BackendStoreConfig) error {
+func (os *OpenSearch) initClient(bsc *searchv1alpha1.BackendStoreConfig) error {
 	if bsc == nil || bsc.OpenSearch == nil {
 		return errors.New("opensearch config is nil")
 	}
@@ -276,7 +276,7 @@ func (os *OpenSearch) initClient(bsc *v1alpha1.BackendStoreConfig) error {
 
 		secret, err := k8sClient.CoreV1().Secrets(secretRef.Namespace).Get(context.TODO(), secretRef.Name, metav1.GetOptions{})
 		if err != nil {
-			klog.Warningf("cannot get secret %s/%s: %v, try to without auth", secret.Namespace, secret.Name, err)
+			klog.Warningf("can not get secret %s/%s: %v, try to without auth", secretRef.Namespace, secretRef.Name, err)
 			return
 		}
 

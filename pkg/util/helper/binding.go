@@ -62,7 +62,7 @@ func IsBindingScheduled(status *workv1alpha2.ResourceBindingStatus) bool {
 	return meta.IsStatusConditionTrue(status.Conditions, workv1alpha2.Scheduled)
 }
 
-// HasScheduledReplica checks if the scheduler has assigned replicas for each cluster.
+// HasScheduledReplica checks if the scheduler has assigned replicas for a cluster.
 func HasScheduledReplica(scheduleResult []workv1alpha2.TargetCluster) bool {
 	for _, clusterResult := range scheduleResult {
 		if clusterResult.Replicas > 0 {
@@ -132,10 +132,7 @@ func RemoveOrphanWorks(c client.Client, works []workv1alpha1.Work) error {
 		}
 		klog.Infof("Delete orphan work %s/%s successfully.", work.GetNamespace(), work.GetName())
 	}
-	if len(errs) > 0 {
-		return errors.NewAggregate(errs)
-	}
-	return nil
+	return errors.NewAggregate(errs)
 }
 
 // FetchWorkload fetches the kubernetes resource to be propagated.
@@ -223,12 +220,7 @@ func DeleteWorks(c client.Client, namespace, name string) error {
 			errs = append(errs, err)
 		}
 	}
-
-	if len(errs) > 0 {
-		return errors.NewAggregate(errs)
-	}
-
-	return nil
+	return errors.NewAggregate(errs)
 }
 
 // GenerateNodeClaimByPodSpec will return a NodeClaim from PodSpec.

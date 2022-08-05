@@ -13,13 +13,32 @@ import (
 	"k8s.io/cli-runtime/pkg/resource"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/describe"
+	"k8s.io/kubectl/pkg/util/templates"
 
 	"github.com/karmada-io/karmada/pkg/karmadactl/options"
 )
 
+var (
+	describeExample = templates.Examples(`
+		# Describe a pod in cluster(member1)
+		%[1]s describe pods/nginx -C=member1
+	
+		# Describe all pods in cluster(member1)
+		%[1]s describe pods -C=member1
+	
+		# Describe a pod identified by type and name in "pod.json" in cluster(member1)
+		%[1]s describe -f pod.json -C=member1
+	
+		# Describe pods by label name=myLabel in cluster(member1)
+		%[1]s describe po -l name=myLabel -C=member1
+	
+		# Describe all pods managed by the 'frontend' replication controller in cluster(member1)
+		# (rc-created pods get the name of the rc as a prefix in the pod name)
+		%[1]s describe pods frontend -C=member1`)
+)
+
 // NewCmdDescribe new describe command.
-func NewCmdDescribe(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Command {
-	ioStreams := genericclioptions.IOStreams{In: getIn, Out: getOut, ErrOut: getErr}
+func NewCmdDescribe(karmadaConfig KarmadaConfig, parentCommand string, streams genericclioptions.IOStreams) *cobra.Command {
 	o := &CommandDescribeOptions{
 		FilenameOptions: &resource.FilenameOptions{},
 		DescriberSettings: &describe.DescriberSettings{
@@ -29,15 +48,14 @@ func NewCmdDescribe(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Co
 
 		CmdParent: parentCommand,
 
-		IOStreams: ioStreams,
+		IOStreams: streams,
 	}
 
 	cmd := &cobra.Command{
-		Use:                   "describe (-f FILENAME | TYPE [NAME_PREFIX | -l label] | TYPE/NAME) (-C CLUSTER)",
-		DisableFlagsInUseLine: true,
-		Short:                 "Show details of a specific resource or group of resources in a cluster",
-		SilenceUsage:          true,
-		Example:               describeExample(parentCommand),
+		Use:          "describe (-f FILENAME | TYPE [NAME_PREFIX | -l label] | TYPE/NAME) (-C CLUSTER)",
+		Short:        "Show details of a specific resource or group of resources in a cluster",
+		SilenceUsage: true,
+		Example:      fmt.Sprintf(describeExample, parentCommand),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := o.Complete(karmadaConfig, args); err != nil {
 				return err
@@ -54,6 +72,7 @@ func NewCmdDescribe(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Co
 	usage := "containing the resource to describe"
 	cmdutil.AddFilenameOptionFlags(cmd, o.FilenameOptions, usage)
 	cmd.Flags().StringVarP(&o.Cluster, "cluster", "C", "", "Specify a member cluster")
+	cmd.Flags().StringVarP(&o.Namespace, "namespace", "n", o.Namespace, "If present, the namespace scope for this CLI request")
 	cmd.Flags().StringVarP(&o.Selector, "selector", "l", o.Selector, "Selector (label query) to filter on, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
 	cmd.Flags().BoolVarP(&o.AllNamespaces, "all-namespaces", "A", o.AllNamespaces, "If present, list the requested object(s) across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
 	cmd.Flags().BoolVar(&o.DescriberSettings.ShowEvents, "show-events", o.DescriberSettings.ShowEvents, "If true, display events related to the described object.")
@@ -86,26 +105,6 @@ type CommandDescribeOptions struct {
 	genericclioptions.IOStreams
 }
 
-func describeExample(parentCommand string) string {
-	example := `
-# Describe a pod in cluster(member1)` + "\n" +
-		fmt.Sprintf("%s describe pods/nginx -C=member1", parentCommand) + `
-
-# Describe all pods in cluster(member1)` + "\n" +
-		fmt.Sprintf("%s describe pods -C=member1", parentCommand) + `
-
-# # Describe a pod identified by type and name in "pod.json" in cluster(member1)` + "\n" +
-		fmt.Sprintf("%s describe -f pod.json -C=member1", parentCommand) + `
-
-# Describe pods by label name=myLabel in cluster(member1)` + "\n" +
-		fmt.Sprintf("%s describe po -l name=myLabel -C=member1", parentCommand) + `
-
-# Describe all pods managed by the 'frontend' replication controller  in cluster(member1)
-# (rc-created pods get the name of the rc as a prefix in the pod name)` + "\n" +
-		fmt.Sprintf("%s describe pods frontend -C=member1", parentCommand)
-	return example
-}
-
 // Complete ensures that options are valid and marshals them if necessary
 func (o *CommandDescribeOptions) Complete(karmadaConfig KarmadaConfig, args []string) error {
 	var err error
@@ -125,12 +124,17 @@ func (o *CommandDescribeOptions) Complete(karmadaConfig KarmadaConfig, args []st
 		return err
 	}
 
-	f := getFactory(o.Cluster, clusterInfo)
+	f := getFactory(o.Cluster, clusterInfo, "")
 
-	o.Namespace, o.EnforceNamespace, err = f.ToRawKubeConfigLoader().Namespace()
+	namespace, enforceNamespace, err := f.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
 		return err
 	}
+
+	if o.Namespace == "" {
+		o.Namespace = namespace
+	}
+	o.EnforceNamespace = enforceNamespace
 
 	if o.AllNamespaces {
 		o.EnforceNamespace = false

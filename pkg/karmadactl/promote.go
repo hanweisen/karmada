@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
-	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"k8s.io/kubectl/pkg/util/templates"
 
 	policyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	workv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
@@ -31,8 +31,26 @@ import (
 )
 
 var (
-	promoteShort = `Promote resources from legacy clusters to karmada control plane.`
-	promoteLong  = `Promote resources from legacy clusters to karmada control plane. Requires the cluster be joined or registered.`
+	promoteShort   = `Promote resources from legacy clusters to karmada control plane`
+	promoteLong    = `Promote resources from legacy clusters to karmada control plane. Requires the cluster be joined or registered.`
+	promoteExample = templates.Examples(`
+		# Promote deployment(default/nginx) from cluster1 to Karmada
+		%[1]s promote deployment nginx -n default -C cluster1
+	
+		# Promote deployment(default/nginx) with gvk from cluster1 to Karmada
+		%[1]s promote deployment.v1.apps nginx -n default -C cluster1
+	
+		# Dumps the artifacts but does not deploy them to Karmada, same as 'dry run'
+		%[1]s promote deployment nginx -n default -C cluster1 -o yaml|json
+	
+		# Promote secret(default/default-token) from cluster1 to Karmada
+		%[1]s promote secret default-token -n default -C cluster1
+			
+		# Support to use '--cluster-kubeconfig' to specify the configuration of member cluster
+		%[1]s promote deployment nginx -n default -C cluster1 --cluster-kubeconfig=<CLUSTER_KUBECONFIG_PATH>
+			
+		# Support to use '--cluster-kubeconfig' and '--cluster-context' to specify the configuration of member cluster
+		%[1]s promote deployment nginx -n default -C cluster1 --cluster-kubeconfig=<CLUSTER_KUBECONFIG_PATH> --cluster-context=<CLUSTER_CONTEXT>`)
 )
 
 // NewCmdPromote defines the `promote` command that promote resources from legacy clusters
@@ -41,10 +59,10 @@ func NewCmdPromote(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Com
 	opts.JSONYamlPrintFlags = genericclioptions.NewJSONYamlPrintFlags()
 
 	cmd := &cobra.Command{
-		Use:          "promote <RESOURCE_TYPE> <RESOURCE_NAME> -n <NAME_SPACE> -c <CLUSTER_NAME>",
+		Use:          "promote <RESOURCE_TYPE> <RESOURCE_NAME> -n <NAME_SPACE> -C <CLUSTER_NAME>",
 		Short:        promoteShort,
 		Long:         promoteLong,
-		Example:      promoteExample(parentCommand),
+		Example:      fmt.Sprintf(promoteExample, parentCommand),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := opts.Complete(args); err != nil {
@@ -66,37 +84,12 @@ func NewCmdPromote(karmadaConfig KarmadaConfig, parentCommand string) *cobra.Com
 	return cmd
 }
 
-func promoteExample(parentCommand string) string {
-	example := `
-# Promote deployment(default/nginx) from cluster1 to Karmada` + "\n" +
-		fmt.Sprintf("%s promote deployment nginx -n default -c cluster1", parentCommand) + `
-
-# Promote deployment((default/nginx) with gvk from cluster1 to Karmada` + "\n" +
-		fmt.Sprintf("%s promote deployment.v1.apps nginx -n default -c cluster1", parentCommand) + `
-
-# Dumps the artifacts but does not deploy them to Karmada, same as 'dry run'` + "\n" +
-		fmt.Sprintf("%s promote deployment nginx -n default -c cluster1 -o yaml|json", parentCommand) + `
-
-# Promote secret(default/default-token) from cluster1 to Karmada` + "\n" +
-		fmt.Sprintf("%s promote secret default-token -n default -c cluster1", parentCommand) + `
-		
-# Support to use '--cluster-kubeconfig' to specify the configuration of member cluster` + "\n" +
-		fmt.Sprintf("%s promote deployment nginx -n default -c cluster1 --cluster-kubeconfig=<CLUSTER_KUBECONFIG_PATH>", parentCommand) + `
-		
-# Support to use '--cluster-kubeconfig' and '--cluster-context' to specify the configuration of member cluster` + "\n" +
-		fmt.Sprintf("%s promote deployment nginx -n default -c cluster1 --cluster-kubeconfig=<CLUSTER_KUBECONFIG_PATH> --cluster-context=<CLUSTER_CONTEXT>", parentCommand)
-	return example
-}
-
 // CommandPromoteOption holds all command options for promote
 type CommandPromoteOption struct {
 	options.GlobalCommandOptions
 
 	// Cluster is the name of legacy cluster
 	Cluster string
-
-	// ClusterNamespace holds the namespace name where the member cluster objects are stored.
-	ClusterNamespace string
 
 	// Namespace is the namespace of legacy resource
 	Namespace string
@@ -128,8 +121,7 @@ func (o *CommandPromoteOption) AddFlags(flags *pflag.FlagSet) {
 	flags.StringVarP(&o.OutputFormat, "output", "o", "", "Output format. One of: json|yaml")
 
 	flags.StringVarP(&o.Namespace, "namespace", "n", "default", "-n=namespace or -n namespace")
-	flags.StringVarP(&o.Cluster, "cluster", "c", "", "the name of legacy cluster (eg -c=member1)")
-	flags.StringVar(&o.ClusterNamespace, "cluster-namespace", options.DefaultKarmadaClusterNamespace, "Namespace in the control plane where member cluster are stored.")
+	flags.StringVarP(&o.Cluster, "cluster", "C", "", "the name of legacy cluster (eg -C=member1)")
 	flags.StringVar(&o.ClusterContext, "cluster-context", "",
 		"Context name of legacy cluster in kubeconfig. Only works when there are multiple contexts in the kubeconfig.")
 	flags.StringVar(&o.ClusterKubeConfig, "cluster-kubeconfig", "",
@@ -212,7 +204,7 @@ func RunPromote(karmadaConfig KarmadaConfig, opts CommandPromoteOption, args []s
 		f = cmdutil.NewFactory(kubeConfigFlags)
 	} else {
 		opts.setClusterProxyInfo(controlPlaneRestConfig, opts.Cluster, clusterInfos)
-		f = getFactory(opts.Cluster, clusterInfos)
+		f = getFactory(opts.Cluster, clusterInfos, "")
 	}
 
 	objInfo, err := opts.getObjInfo(f, opts.Cluster, args)
@@ -224,7 +216,7 @@ func RunPromote(karmadaConfig KarmadaConfig, opts CommandPromoteOption, args []s
 
 	opts.gvk = obj.GetObjectKind().GroupVersionKind()
 
-	mapper, err := apiutil.NewDynamicRESTMapper(controlPlaneRestConfig)
+	mapper, err := restmapper.MapperProvider(controlPlaneRestConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create restmapper: %v", err)
 	}

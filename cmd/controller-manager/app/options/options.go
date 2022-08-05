@@ -11,6 +11,7 @@ import (
 	componentbaseconfig "k8s.io/component-base/config"
 
 	"github.com/karmada-io/karmada/pkg/features"
+	"github.com/karmada-io/karmada/pkg/sharedcli/profileflag"
 	"github.com/karmada-io/karmada/pkg/sharedcli/ratelimiterflag"
 	"github.com/karmada-io/karmada/pkg/util"
 )
@@ -93,7 +94,7 @@ type Options struct {
 	// It can be set to "0" to disable the metrics serving.
 	// Defaults to ":8080".
 	MetricsBindAddress string
-	// concurrentClusterSyncs is the number of cluster objects that are
+	// ConcurrentClusterSyncs is the number of cluster objects that are
 	// allowed to sync concurrently.
 	ConcurrentClusterSyncs int
 	// ConcurrentClusterResourceBindingSyncs is the number of clusterresourcebinding objects that are
@@ -110,8 +111,12 @@ type Options struct {
 	ConcurrentNamespaceSyncs int
 	// ConcurrentResourceTemplateSyncs is the number of resource templates that are allowed to sync concurrently.
 	ConcurrentResourceTemplateSyncs int
+	// If set to true enables NoExecute Taints and will evict all not-tolerating
+	// objects propagating on Clusters tainted with this kind of Taints.
+	EnableTaintManager bool
 
 	RateLimiterOpts ratelimiterflag.Options
+	ProfileOpts     profileflag.Options
 }
 
 // NewOptions builds an empty options.
@@ -188,7 +193,9 @@ func (o *Options) AddFlags(flags *pflag.FlagSet, allControllers, disabledByDefau
 	flags.IntVar(&o.ConcurrentWorkSyncs, "concurrent-work-syncs", 5, "The number of Works that are allowed to sync concurrently.")
 	flags.IntVar(&o.ConcurrentNamespaceSyncs, "concurrent-namespace-syncs", 1, "The number of Namespaces that are allowed to sync concurrently.")
 	flags.IntVar(&o.ConcurrentResourceTemplateSyncs, "concurrent-resource-template-syncs", 5, "The number of resource templates that are allowed to sync concurrently.")
+	flags.BoolVar(&o.EnableTaintManager, "enable-taint-manager", true, "If set to true enables NoExecute Taints and will evict all not-tolerating objects propagating on Clusters tainted with this kind of Taints.")
 
 	o.RateLimiterOpts.AddFlags(flags)
+	o.ProfileOpts.AddFlags(flags)
 	features.FeatureGate.AddFlag(flags)
 }

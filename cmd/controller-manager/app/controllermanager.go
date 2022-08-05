@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -44,12 +45,14 @@ import (
 	"github.com/karmada-io/karmada/pkg/resourceinterpreter"
 	"github.com/karmada-io/karmada/pkg/sharedcli"
 	"github.com/karmada-io/karmada/pkg/sharedcli/klogflag"
+	"github.com/karmada-io/karmada/pkg/sharedcli/profileflag"
 	"github.com/karmada-io/karmada/pkg/util"
 	"github.com/karmada-io/karmada/pkg/util/gclient"
 	"github.com/karmada-io/karmada/pkg/util/helper"
 	"github.com/karmada-io/karmada/pkg/util/informermanager"
 	"github.com/karmada-io/karmada/pkg/util/objectwatcher"
 	"github.com/karmada-io/karmada/pkg/util/overridemanager"
+	"github.com/karmada-io/karmada/pkg/util/restmapper"
 	"github.com/karmada-io/karmada/pkg/version"
 	"github.com/karmada-io/karmada/pkg/version/sharedcommand"
 )
@@ -97,6 +100,9 @@ func NewControllerManagerCommand(ctx context.Context) *cobra.Command {
 // Run runs the controller-manager with options. This should never exit.
 func Run(ctx context.Context, opts *options.Options) error {
 	klog.Infof("karmada-controller-manager version: %s", version.Get())
+
+	profileflag.ListenAndServe(opts.ProfileOpts)
+
 	config, err := controllerruntime.GetConfig()
 	if err != nil {
 		panic(err)
@@ -116,6 +122,7 @@ func Run(ctx context.Context, opts *options.Options) error {
 		HealthProbeBindAddress:     net.JoinHostPort(opts.BindAddress, strconv.Itoa(opts.SecurePort)),
 		LivenessEndpointName:       "/healthz",
 		MetricsBindAddress:         opts.MetricsBindAddress,
+		MapperProvider:             restmapper.MapperProvider,
 		Controller: v1alpha1.ControllerConfigurationSpec{
 			GroupKindConcurrency: map[string]int{
 				workv1alpha1.SchemeGroupVersion.WithKind("Work").GroupKind().String():                     opts.ConcurrentWorkSyncs,
@@ -174,6 +181,7 @@ func init() {
 func startClusterController(ctx controllerscontext.Context) (enabled bool, err error) {
 	mgr := ctx.Mgr
 	opts := ctx.Opts
+
 	clusterController := &cluster.Controller{
 		Client:                    mgr.GetClient(),
 		EventRecorder:             mgr.GetEventRecorderFor(cluster.ControllerName),
@@ -185,6 +193,23 @@ func startClusterController(ctx controllerscontext.Context) (enabled bool, err e
 	if err := clusterController.SetupWithManager(mgr); err != nil {
 		return false, err
 	}
+
+	if ctx.Opts.EnableTaintManager {
+		if err := cluster.IndexField(mgr); err != nil {
+			return false, err
+		}
+
+		taintManager := &cluster.NoExecuteTaintManager{
+			Client:                             mgr.GetClient(),
+			EventRecorder:                      mgr.GetEventRecorderFor(cluster.TaintManagerName),
+			ClusterTaintEvictionRetryFrequency: 10 * time.Second,
+			ConcurrentReconciles:               3,
+		}
+		if err := taintManager.SetupWithManager(mgr); err != nil {
+			return false, err
+		}
+	}
+
 	return true, nil
 }
 
@@ -295,14 +320,13 @@ func startBindingController(ctx controllerscontext.Context) (enabled bool, err e
 
 func startExecutionController(ctx controllerscontext.Context) (enabled bool, err error) {
 	executionController := &execution.Controller{
-		Client:               ctx.Mgr.GetClient(),
-		EventRecorder:        ctx.Mgr.GetEventRecorderFor(execution.ControllerName),
-		RESTMapper:           ctx.Mgr.GetRESTMapper(),
-		ObjectWatcher:        ctx.ObjectWatcher,
-		PredicateFunc:        helper.NewExecutionPredicate(ctx.Mgr),
-		InformerManager:      informermanager.GetInstance(),
-		ClusterClientSetFunc: util.NewClusterDynamicClientSet,
-		RatelimiterOptions:   ctx.Opts.RateLimiterOptions,
+		Client:             ctx.Mgr.GetClient(),
+		EventRecorder:      ctx.Mgr.GetEventRecorderFor(execution.ControllerName),
+		RESTMapper:         ctx.Mgr.GetRESTMapper(),
+		ObjectWatcher:      ctx.ObjectWatcher,
+		PredicateFunc:      helper.NewExecutionPredicate(ctx.Mgr),
+		InformerManager:    informermanager.GetInstance(),
+		RatelimiterOptions: ctx.Opts.RateLimiterOptions,
 	}
 	if err := executionController.SetupWithManager(ctx.Mgr); err != nil {
 		return false, err
@@ -343,6 +367,7 @@ func startNamespaceController(ctx controllerscontext.Context) (enabled bool, err
 		Client:                       ctx.Mgr.GetClient(),
 		EventRecorder:                ctx.Mgr.GetEventRecorderFor(namespace.ControllerName),
 		SkippedPropagatingNamespaces: skippedPropagatingNamespaces,
+		OverrideManager:              ctx.OverrideManager,
 	}
 	if err := namespaceSyncController.SetupWithManager(ctx.Mgr); err != nil {
 		return false, err
@@ -503,6 +528,7 @@ func setupControllers(mgr controllerruntime.Manager, opts *options.Options, stop
 			ClusterAPIBurst:                   opts.ClusterAPIBurst,
 			SkippedPropagatingNamespaces:      opts.SkippedPropagatingNamespaces,
 			ConcurrentWorkSyncs:               opts.ConcurrentWorkSyncs,
+			EnableTaintManager:                opts.EnableTaintManager,
 			RateLimiterOptions:                opts.RateLimiterOpts,
 		},
 		StopChan:                    stopChan,

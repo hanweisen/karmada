@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	componentbaseconfig "k8s.io/component-base/config"
 
+	"github.com/karmada-io/karmada/pkg/sharedcli/profileflag"
 	"github.com/karmada-io/karmada/pkg/sharedcli/ratelimiterflag"
 	"github.com/karmada-io/karmada/pkg/util"
 )
@@ -75,7 +76,7 @@ type Options struct {
 	ClusterAPIEndpoint string
 	// ProxyServerAddress holds the proxy server address that is used to proxy to the cluster.
 	ProxyServerAddress string
-	// concurrentClusterSyncs is the number of cluster objects that are
+	// ConcurrentClusterSyncs is the number of cluster objects that are
 	// allowed to sync concurrently.
 	ConcurrentClusterSyncs int
 	// ConcurrentWorkSyncs is the number of work objects that are
@@ -88,6 +89,24 @@ type Options struct {
 	MetricsBindAddress string
 
 	RateLimiterOpts ratelimiterflag.Options
+
+	ProfileOpts profileflag.Options
+
+	// ReportSecrets specifies the secrets that are allowed to be reported to the Karmada control plane
+	// during registering.
+	// Valid values are:
+	// - "None": Don't report any secrets.
+	// - "KubeCredentials": Report the secret that contains mandatory credentials to access the member cluster.
+	// - "KubeImpersonator": Report the secret that contains the token of impersonator.
+	// - "KubeCredentials,KubeImpersonator": Report both KubeCredentials and KubeImpersonator.
+	// Defaults to "KubeCredentials,KubeImpersonator".
+	ReportSecrets []string
+
+	// ClusterProvider is the cluster's provider.
+	ClusterProvider string
+
+	// ClusterRegion represents the region of the cluster locate in.
+	ClusterRegion string
 }
 
 // NewOptions builds an default scheduler options.
@@ -151,6 +170,10 @@ func (o *Options) AddFlags(fs *pflag.FlagSet, allControllers []string) {
 	fs.DurationVar(&o.ResyncPeriod.Duration, "resync-period", 0, "Base frequency the informers are resynced.")
 	fs.IntVar(&o.ConcurrentClusterSyncs, "concurrent-cluster-syncs", 5, "The number of Clusters that are allowed to sync concurrently.")
 	fs.IntVar(&o.ConcurrentWorkSyncs, "concurrent-work-syncs", 5, "The number of Works that are allowed to sync concurrently.")
+	fs.StringSliceVar(&o.ReportSecrets, "report-secrets", []string{"KubeCredentials", "KubeImpersonator"}, "The secrets that are allowed to be reported to the Karmada control plane during registering. Valid values are 'KubeCredentials', 'KubeImpersonator' and 'None'. e.g 'KubeCredentials,KubeImpersonator' or 'None'.")
 	fs.StringVar(&o.MetricsBindAddress, "metrics-bind-address", ":8080", "The TCP address that the controller should bind to for serving prometheus metrics(e.g. 127.0.0.1:8088, :8088)")
+	fs.StringVar(&o.ClusterProvider, "cluster-provider", "", "Provider of the joining cluster. The Karmada scheduler can use this information to spread workloads across providers for higher availability.")
+	fs.StringVar(&o.ClusterRegion, "cluster-region", "", "The region of the joining cluster. The Karmada scheduler can use this information to spread workloads across regions for higher availability.")
 	o.RateLimiterOpts.AddFlags(fs)
+	o.ProfileOpts.AddFlags(fs)
 }

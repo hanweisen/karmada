@@ -26,10 +26,7 @@ spec:
         {{- include "karmada.apiserver.labels" . | nindent 8 }}
         {{- include "karmada.apiserver.podLabels" . | nindent 8 }}
     spec:
-      {{- with .Values.apiServer.imagePullSecrets }}
-      imagePullSecrets:
-      {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "karmada.apiServer.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: {{ $name }}-apiserver
           image: {{ template "karmada.apiServer.image" . }}
@@ -56,7 +53,6 @@ spec:
             - --etcd-servers=https://etcd-client.{{ include "karmada.namespace" . }}.svc.{{ .Values.clusterDomain }}:2379
             {{- end }}
             - --bind-address=0.0.0.0
-            - --insecure-port=0
             - --kubelet-client-certificate=/etc/kubernetes/pki/karmada.crt
             - --kubelet-client-key=/etc/kubernetes/pki/karmada.key
             - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname

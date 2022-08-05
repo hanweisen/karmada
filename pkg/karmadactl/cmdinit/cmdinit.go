@@ -6,14 +6,52 @@ import (
 
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
+	"k8s.io/kubectl/pkg/util/templates"
 
 	"github.com/karmada-io/karmada/pkg/karmadactl/cmdinit/kubernetes"
 	"github.com/karmada-io/karmada/pkg/version"
 )
 
 const (
-	initShort = `install karmada in kubernetes.`
-	initLong  = `install karmada in kubernetes.`
+	initShort = `Install karmada in kubernetes`
+	initLong  = `Install karmada in kubernetes.`
+)
+
+var (
+	initExamples = templates.Examples(`
+		# Install Karmada in Kubernetes cluster
+		# The karmada-apiserver binds the master node's IP by default
+		%[1]s init
+		
+		# China mainland registry mirror can be specified by using kube-image-mirror-country
+		%[1]s init --kube-image-mirror-country=cn
+		
+		# Kube registry can be specified by using kube-image-registry
+		%[1]s init --kube-image-registry=registry.cn-hangzhou.aliyuncs.com/google_containers
+		
+		# Specify the URL to download CRD tarball
+		%[1]s init --crds https://github.com/karmada-io/karmada/releases/download/%[2]s/crds.tar.gz
+		
+		# Specify the local CRD tarball
+		%[1]s init --crds /root/crds.tar.gz
+		
+		# Use PVC to persistent storage etcd data
+		%[1]s init --etcd-storage-mode PVC --storage-classes-name {StorageClassesName}
+		
+		# Use hostPath to persistent storage etcd data. For data security, only 1 etcd pod can run in hostPath mode
+		%[1]s init --etcd-storage-mode hostPath  --etcd-replicas 1
+		
+		# Use hostPath to persistent storage etcd data but select nodes by labels
+		%[1]s init --etcd-storage-mode hostPath --etcd-node-selector-labels karmada.io/etcd=true
+		
+		# Private registry can be specified for all images
+		%[1]s init --etcd-image local.registry.com/library/etcd:3.5.3-0
+		
+		# Deploy highly available(HA) karmada
+		%[1]s init --karmada-apiserver-replicas 3 --etcd-replicas 3 --etcd-storage-mode PVC --storage-classes-name {StorageClassesName}
+				
+		# Specify external IPs(load balancer or HA IP) which used to sign the certificate
+		%[1]s init --cert-external-ip 10.235.1.2 --cert-external-dns www.karmada.io`)
 )
 
 // NewCmdInit install karmada on kubernetes
@@ -38,7 +76,7 @@ func NewCmdInit(parentCommand string) *cobra.Command {
 			return nil
 		},
 	}
-	flags := cmd.PersistentFlags()
+	flags := cmd.Flags()
 
 	releaseVer, err := version.ParseGitVersion(version.Get().GitVersion)
 	if err != nil {
@@ -57,7 +95,7 @@ func NewCmdInit(parentCommand string) *cobra.Command {
 	flags.StringVar(&opts.KubeConfig, "kubeconfig", "", "absolute path to the kubeconfig file")
 	flags.StringVar(&opts.Context, "context", "", "The name of the kubeconfig context to use")
 	// etcd
-	flags.StringVarP(&opts.EtcdStorageMode, "etcd-storage-mode", "", "emptyDir",
+	flags.StringVarP(&opts.EtcdStorageMode, "etcd-storage-mode", "", "hostPath",
 		fmt.Sprintf("etcd data storage mode(%s). value is PVC, specify --storage-classes-name", strings.Join(kubernetes.SupportedStorageMode(), ",")))
 	flags.StringVarP(&opts.EtcdImage, "etcd-image", "", "", "etcd image")
 	flags.StringVarP(&opts.EtcdInitImage, "etcd-init-image", "", "docker.io/alpine:3.15.1", "etcd init container image")
@@ -87,39 +125,10 @@ func NewCmdInit(parentCommand string) *cobra.Command {
 }
 
 func initExample(parentCommand string) string {
-	example := `
-# Install Karmada in Kubernetes cluster
-# The karmada-apiserver binds the master node's IP by default` + "\n" +
-		fmt.Sprintf("%s init", parentCommand) + `
-
-# China mainland registry mirror can be specified by using kube-image-mirror-country` + "\n" +
-		fmt.Sprintf("%s init --kube-image-mirror-country=cn", parentCommand) + `
-
-# Kube registry can be specified by using kube-image-registry` + "\n" +
-		fmt.Sprintf("%s init --kube-image-registry=registry.cn-hangzhou.aliyuncs.com/google_containers", parentCommand) + `
-
-# Specify the URL to download CRD tarball` + "\n" +
-		fmt.Sprintf("%s init --crds https://github.com/karmada-io/karmada/releases/download/v1.1.0/crds.tar.gz", parentCommand) + `
-
-# Specify the local CRD tarball` + "\n" +
-		fmt.Sprintf("%s init --crds /root/crds.tar.gz", parentCommand) + `
-
-# Use PVC to persistent storage etcd data` + "\n" +
-		fmt.Sprintf("%s init --etcd-storage-mode PVC --storage-classes-name {StorageClassesName}", parentCommand) + `
-
-# Use hostPath to persistent storage etcd data. For data security, only 1 etcd pod can run in hostPath mode` + "\n" +
-		fmt.Sprintf("%s init --etcd-storage-mode hostPath  --etcd-replicas 1", parentCommand) + `
-
-# Use hostPath to persistent storage etcd data but select nodes by labels` + "\n" +
-		fmt.Sprintf("%s init --etcd-storage-mode hostPath --etcd-node-selector-labels karmada.io/etcd=true", parentCommand) + `
-
-# Private registry can be specified for all images` + "\n" +
-		fmt.Sprintf("%s init --etcd-image local.registry.com/library/etcd:3.5.3-0", parentCommand) + `
-
-# Deploy highly available(HA) karmada` + "\n" +
-		fmt.Sprintf("%s init --karmada-apiserver-replicas 3 --etcd-replicas 3 --etcd-storage-mode PVC --storage-classes-name {StorageClassesName}", parentCommand) + `
-		
-# Specify external IPs(load balancer or HA IP) which used to sign the certificate` + "\n" +
-		fmt.Sprintf("%s init --cert-external-ip 10.235.1.2 --cert-external-dns www.karmada.io", parentCommand)
-	return example
+	releaseVer, err := version.ParseGitVersion(version.Get().GitVersion)
+	if err != nil {
+		klog.Infof("No default release version found. build version: %s", version.Get().String())
+		releaseVer = &version.ReleaseVersion{}
+	}
+	return fmt.Sprintf(initExamples, parentCommand, releaseVer.FirstMinorRelease())
 }
